@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Gimbal Face Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+  <style>
+    body { margin: 0; display: flex; flex-direction: column; align-items: center; background: #1a1a1a; color: white; font-family: sans-serif; }
+    .container { position: relative; width: 640px; height: 480px; margin-top: 20px; }
+    canvas { border-radius: 10px; border: 2px solid #444; }
+    .controls { margin-top: 20px; padding: 15px; background: #333; border-radius: 8px; }
+    button { padding: 10px 20px; font-size: 16px; cursor: pointer; background: #00ff00; border: none; border-radius: 5px; font-weight: bold; }
+    button:disabled { background: #555; }
+    #status { margin-top: 10px; color: #aaa; }
+  </style>
+</head>
+<body>
+
+<div class="controls">
+  <button id="connectBtn">VERBIND MET GIMBAL</button>
+  <div id="status">Status: Losgekoppeld</div>
+</div>
+
+<div class="container">
+  <video id="input_video" style="display:none"></video>
+  <canvas id="output_canvas" width="640px" height="480px"></canvas>
+</div>
+
+<script type="module">
+  let bluetoothCharacteristic = null;
+  const connectBtn = document.getElementById('connectBtn');
+  const statusDiv = document.getElementById('status');
+
+  // --- Bluetooth Logica ---
+  connectBtn.addEventListener('click', async () => {
+    try {
+      statusDiv.innerText = "Status: Zoeken naar ESP32...";
+      const device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb'] // Standaard voor Serial Bluetooth
+      });
+      const server = await device.gatt.connect();
+      // Let op: Sommige ESP32 Bluetooth libraries gebruiken specifieke UUIDs. 
+      // Voor nu loggen we de verbinding.
+      statusDiv.innerText = "Status: Verbonden met " + device.name;
+      connectBtn.disabled = true;
+    } catch (error) {
+      statusDiv.innerText = "Status: Fout - " + error;
+    }
+  });
+
+  async function stuurData(pan, tilt) {
+    if (bluetoothCharacteristic) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(`${pan},${tilt}\n`);
+      await bluetoothCharacteristic.writeValue(data);
+    }
+  }
+
+  // --- Face Tracking Logica ---
+  const videoElement = document.getElementById('input_video');
+  const canvasElement = document.getElementById('output_canvas');
+  const canvasCtx = canvasElement.getContext('2d');
+
+  function onResults(results) {
+    canvasCtx.save();
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+    if (results.detections.length > 0) {
+      const face = results.detections[0].boundingBox;
+      
+      // Teken Groen Doosje
+      canvasCtx.strokeStyle = "#00FF00";
+      canvasCtx.lineWidth = 4;
+      canvasCtx.strokeRect(face.xCenter * 640 - (face.width * 640 / 2), 
+                          face.yCenter * 480 - (face.height * 480 / 2), 
+                          face.width * 640, face.height * 480);
+
+      // Bereken hoeken (0-180 graden)
+      const pan = Math.round((1 - face.xCenter) * 180);
+      const tilt = Math.round(face.yCenter * 180);
+
+      stuurData(pan, tilt);
+    }
+    canvasCtx.restore();
+  }
+
+  const faceDetection = new FaceDetection({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
+  });
+  faceDetection.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
+  faceDetection.onResults(onResults);
+
+  const camera = new Camera(videoElement, {
+    onFrame: async () => { await faceDetection.send({image: videoElement}); },
+    width: 640, height: 480
+  });
+  camera.start();
+</script>
+</body>
+</html>
