@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Gimbal Face Tracker - Robot V2</title>
+  <title>Gimbal Fix - Force Scan</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <style>
@@ -9,16 +9,15 @@
     .container { position: relative; width: 640px; height: 480px; margin-top: 20px; }
     canvas { border-radius: 10px; border: 2px solid #444; width: 100%; max-width: 640px; height: auto; }
     .controls { margin-top: 20px; padding: 15px; background: #333; border-radius: 8px; text-align: center; }
-    button { padding: 12px 24px; font-size: 16px; cursor: pointer; background: #00ff00; border: none; border-radius: 5px; font-weight: bold; color: black; }
-    button:disabled { background: #555; cursor: not-allowed; }
+    button { padding: 15px 30px; font-size: 18px; cursor: pointer; background: #ff00ff; border: none; border-radius: 5px; font-weight: bold; color: white; }
     #status { margin-top: 10px; color: #00ff00; font-weight: bold; }
   </style>
 </head>
 <body>
 
 <div class="controls">
-  <button id="connectBtn">VERBIND MET ROBOT_V2</button>
-  <div id="status">Status: Klaar voor start</div>
+  <button id="connectBtn">FORCEREN: ZOEK APPARATEN</button>
+  <div id="status">Status: Klik op de roze knop</div>
 </div>
 
 <div class="container">
@@ -31,29 +30,28 @@
   const connectBtn = document.getElementById('connectBtn');
   const statusDiv = document.getElementById('status');
 
-  // De UUIDs blijven hetzelfde, alleen de naam in de filter is aangepast
   const serviceUUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
   const charUUID    = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 
   connectBtn.addEventListener('click', async () => {
     try {
-      statusDiv.innerText = "Status: Scannen naar Robot_V2...";
+      statusDiv.innerText = "Status: Bluetooth venster forceren...";
       
+      // WE ZOEKEN NU ZONDER FILTERS OM DE LIJST TE FORCEREN
       const device = await navigator.bluetooth.requestDevice({
-        filters: [{ name: "Robot_V2" }], // Matcht nu met je nieuwe Arduino code
+        acceptAllDevices: true,
         optionalServices: [serviceUUID]
       });
       
-      statusDiv.innerText = "Status: Verbinden...";
+      statusDiv.innerText = "Status: Verbinden met " + (device.name || "Onbekend") + "...";
       const server = await device.gatt.connect();
       const service = await server.getPrimaryService(serviceUUID);
       bluetoothCharacteristic = await service.getCharacteristic(charUUID);
       
       statusDiv.innerText = "Status: VERBONDEN! ✅";
-      connectBtn.disabled = true;
-      connectBtn.innerText = "ROBOT_V2 ACTIEF";
+      connectBtn.style.background = "#555";
+      connectBtn.innerText = "VERBONDEN";
     } catch (error) {
-      console.error(error);
       statusDiv.innerText = "Fout: " + error.message;
     }
   });
@@ -69,7 +67,7 @@
     }
   }
 
-  // --- Face Detection (MediaPipe) ---
+  // --- Face Detection Logica ---
   const videoElement = document.getElementById('input_video');
   const canvasElement = document.getElementById('output_canvas');
   const canvasCtx = canvasElement.getContext('2d');
@@ -78,32 +76,20 @@
     canvasCtx.save();
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
     canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-
     if (results.detections.length > 0) {
       const face = results.detections[0].boundingBox;
       canvasCtx.strokeStyle = "#00FF00";
       canvasCtx.lineWidth = 4;
-      canvasCtx.strokeRect(face.xCenter * 640 - (face.width * 640 / 2), 
-                          face.yCenter * 480 - (face.height * 480 / 2), 
-                          face.width * 640, face.height * 480);
-
-      let xPos = Math.round((1 - face.xCenter) * 100); 
-      let yPos = Math.round(face.yCenter * 100);
-      stuurData(xPos, yPos);
+      canvasCtx.strokeRect(face.xCenter * 640 - (face.width * 640 / 2), face.yCenter * 480 - (face.height * 480 / 2), face.width * 640, face.height * 480);
+      stuurData(Math.round((1 - face.xCenter) * 100), Math.round(face.yCenter * 100));
     }
     canvasCtx.restore();
   }
 
-  const faceDetection = new FaceDetection({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
-  });
+  const faceDetection = new FaceDetection({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}` });
   faceDetection.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
   faceDetection.onResults(onResults);
-
-  const camera = new Camera(videoElement, {
-    onFrame: async () => { await faceDetection.send({image: videoElement}); },
-    width: 640, height: 480
-  });
+  const camera = new Camera(videoElement, { onFrame: async () => { await faceDetection.send({image: videoElement}); }, width: 640, height: 480 });
   camera.start();
 </script>
 </body>
