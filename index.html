@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Gimbal Face Tracker</title>
+  <title>Gimbal Face Tracker - Open Scan</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <style>
@@ -17,8 +17,8 @@
 <body>
 
 <div class="controls">
-  <button id="connectBtn">VERBIND MET ROBOT</button>
-  <div id="status">Status: Klaar om te verbinden</div>
+  <button id="connectBtn">ZOEK APPARATEN</button>
+  <div id="status">Status: Klaar om te scannen</div>
 </div>
 
 <div class="container">
@@ -31,17 +31,17 @@
   const connectBtn = document.getElementById('connectBtn');
   const statusDiv = document.getElementById('status');
 
-  // UUIDs die exact matchen met je Arduino code
+  // Deze UUIDs moeten matchen met je Arduino code
   const serviceUUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
   const charUUID    = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 
   connectBtn.addEventListener('click', async () => {
     try {
-      statusDiv.innerText = "Status: Bluetooth zoeken...";
+      statusDiv.innerText = "Status: Bluetooth venster openen...";
       
-      // Zoek specifiek naar jouw robotnaam
+      // We zoeken nu naar ALLE apparaten om de lijst te forceren
       const device = await navigator.bluetooth.requestDevice({
-        filters: [{ name: "Mijn PanTilt Robot" }],
+        acceptAllDevices: true,
         optionalServices: [serviceUUID]
       });
       
@@ -62,7 +62,7 @@
   let lastSent = 0;
   async function stuurData(x, y) {
     const now = Date.now();
-    // Stuur data elke 100ms (10 keer per seconde)
+    // Stuur data elke 100ms (10 keer per seconde) om de verbinding stabiel te houden
     if (now - lastSent > 100 && bluetoothCharacteristic) { 
       const encoder = new TextEncoder();
       const data = encoder.encode(`${x},${y}\n`);
@@ -71,7 +71,7 @@
     }
   }
 
-  // --- Face Tracking (MediaPipe) ---
+  // --- Face Detection (MediaPipe) ---
   const videoElement = document.getElementById('input_video');
   const canvasElement = document.getElementById('output_canvas');
   const canvasCtx = canvasElement.getContext('2d');
@@ -84,15 +84,13 @@
     if (results.detections.length > 0) {
       const face = results.detections[0].boundingBox;
       
-      // Teken groene box
       canvasCtx.strokeStyle = "#00FF00";
       canvasCtx.lineWidth = 4;
       canvasCtx.strokeRect(face.xCenter * 640 - (face.width * 640 / 2), 
                           face.yCenter * 480 - (face.height * 480 / 2), 
                           face.width * 640, face.height * 480);
 
-      // Bereken positie (0-100)
-      // X is gespiegeld voor selfie-modus
+      // Positie 0-100 (X is gespiegeld voor selfie-view)
       let xPos = Math.round((1 - face.xCenter) * 100); 
       let yPos = Math.round(face.yCenter * 100);
 
