@@ -1,24 +1,24 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Gimbal Face Tracker</title>
+  <title>Gimbal Face Tracker (Open Scan)</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <style>
     body { margin: 0; display: flex; flex-direction: column; align-items: center; background: #1a1a1a; color: white; font-family: sans-serif; }
     .container { position: relative; width: 640px; height: 480px; margin-top: 20px; }
-    canvas { border-radius: 10px; border: 2px solid #444; }
-    .controls { margin-top: 20px; padding: 15px; background: #333; border-radius: 8px; }
-    button { padding: 10px 20px; font-size: 16px; cursor: pointer; background: #00ff00; border: none; border-radius: 5px; font-weight: bold; }
-    button:disabled { background: #555; }
-    #status { margin-top: 10px; color: #aaa; }
+    canvas { border-radius: 10px; border: 2px solid #444; width: 100%; max-width: 640px; height: auto; }
+    .controls { margin-top: 20px; padding: 15px; background: #333; border-radius: 8px; text-align: center; }
+    button { padding: 12px 24px; font-size: 16px; cursor: pointer; background: #00ff00; border: none; border-radius: 5px; font-weight: bold; color: black; }
+    button:disabled { background: #555; cursor: not-allowed; }
+    #status { margin-top: 10px; color: #00ff00; font-weight: bold; }
   </style>
 </head>
 <body>
 
 <div class="controls">
-  <button id="connectBtn">VERBIND MET ROBOT</button>
-  <div id="status">Status: Losgekoppeld</div>
+  <button id="connectBtn">ZOEK ROBOT</button>
+  <div id="status">Status: Klaar om te verbinden</div>
 </div>
 
 <div class="container">
@@ -31,44 +31,47 @@
   const connectBtn = document.getElementById('connectBtn');
   const statusDiv = document.getElementById('status');
 
-  // DE JUISTE UUID VOOR DE ARDUINO NANO ESP32 CODE
+  // DEZE UUIDs MOETEN MATCHEN MET JE ARDUINO CODE
   const serviceUUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
   const charUUID    = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 
   connectBtn.addEventListener('click', async () => {
     try {
-      statusDiv.innerText = "Status: Zoeken...";
+      statusDiv.innerText = "Status: Bluetooth venster openen...";
+      
+      // AANPASSING: We accepteren nu alle apparaten om de lijst te forceren
       const device = await navigator.bluetooth.requestDevice({
-        filters: [{ name: "Mijn PanTilt Robot" }], 
+        acceptAllDevices: true,
         optionalServices: [serviceUUID]
       });
       
+      statusDiv.innerText = "Status: Verbinden met " + device.name + "...";
       const server = await device.gatt.connect();
       const service = await server.getPrimaryService(serviceUUID);
       bluetoothCharacteristic = await service.getCharacteristic(charUUID);
       
-      statusDiv.innerText = "Status: Verbonden!";
+      statusDiv.innerText = "Status: VERBONDEN! ✅";
       connectBtn.disabled = true;
-      connectBtn.style.background = "#555";
+      connectBtn.innerText = "VERBONDEN";
     } catch (error) {
-      statusDiv.innerText = "Fout: " + error;
+      console.error(error);
+      statusDiv.innerText = "Fout: " + error.message;
     }
   });
 
-  // Functie om data veilig te sturen (niet te vaak)
   let lastSent = 0;
   async function stuurData(x, y) {
     const now = Date.now();
-    if (now - lastSent > 50 && bluetoothCharacteristic) { // Max 20x per seconde
+    // Stuur data maximaal 10 keer per seconde (100ms) om Bluetooth niet te overbelasten
+    if (now - lastSent > 100 && bluetoothCharacteristic) { 
       const encoder = new TextEncoder();
-      // We sturen "50,50" formaat
       const data = encoder.encode(`${x},${y}\n`);
-      await bluetoothCharacteristic.writeValue(data).catch(e => console.log(e));
+      await bluetoothCharacteristic.writeValue(data).catch(e => console.warn("Verzendfout:", e));
       lastSent = now;
     }
   }
 
-  // --- Face Tracking ---
+  // --- MediaPipe Face Detection ---
   const videoElement = document.getElementById('input_video');
   const canvasElement = document.getElementById('output_canvas');
   const canvasCtx = canvasElement.getContext('2d');
@@ -81,16 +84,13 @@
     if (results.detections.length > 0) {
       const face = results.detections[0].boundingBox;
       
-      // Teken kader
       canvasCtx.strokeStyle = "#00FF00";
       canvasCtx.lineWidth = 4;
       canvasCtx.strokeRect(face.xCenter * 640 - (face.width * 640 / 2), 
                           face.yCenter * 480 - (face.height * 480 / 2), 
                           face.width * 640, face.height * 480);
 
-      // Bereken positie (0 tot 100)
-      // 0 = Links/Boven, 100 = Rechts/Onder
-      // We spiegelen X omdat de selfie-camera vaak gespiegeld is
+      // Bereken positie (0-100)
       let xPos = Math.round((1 - face.xCenter) * 100); 
       let yPos = Math.round(face.yCenter * 100);
 
