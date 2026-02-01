@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Gimbal Tracker - Full Speed</title>
+  <title>Gimbal Tracker - Pan & Tilt Face Tracking</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <style>
@@ -33,41 +33,27 @@
   const serviceUUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
   const charUUID    = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 
-  // --- Bluetooth Verbinding ---
   connectBtn.addEventListener('click', async () => {
     try {
-      statusDiv.innerText = "Status: Zoeken naar robot...";
-      const device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [serviceUUID] }] // Zoekt op type, niet op naam
-      });
-      
+      const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [serviceUUID] }] });
       const server = await device.gatt.connect();
       const service = await server.getPrimaryService(serviceUUID);
       bluetoothCharacteristic = await service.getCharacteristic(charUUID);
-      
       statusDiv.innerText = "Status: VERBONDEN! ✅";
-      connectBtn.disabled = true;
-      connectBtn.innerText = "ACTIEF";
-    } catch (error) { 
-      statusDiv.innerText = "Fout: " + error.message; 
-    }
+    } catch (error) { statusDiv.innerText = "Fout: " + error.message; }
   });
 
-  // --- Data Verzenden ---
   let lastSent = 0;
   async function stuurData(x, y) {
     const now = Date.now();
-    // 35ms is een veilige snelheid voor stabiele tracking op iPhone
     if (now - lastSent > 35 && bluetoothCharacteristic) { 
       const encoder = new TextEncoder();
       const data = encoder.encode(`${x},${y}\n`);
-      // Zonder response is veel sneller
       await bluetoothCharacteristic.writeValueWithoutResponse(data).catch(() => {});
       lastSent = now;
     }
   }
 
-  // --- Face Detection (MediaPipe) ---
   const videoElement = document.getElementById('input_video');
   const canvasElement = document.getElementById('output_canvas');
   const canvasCtx = canvasElement.getContext('2d');
@@ -80,14 +66,12 @@
     if (results.detections.length > 0) {
       const face = results.detections[0].boundingBox;
       
-      // Teken groene box om gezicht
       canvasCtx.strokeStyle = "#00FF00";
       canvasCtx.lineWidth = 4;
       canvasCtx.strokeRect(face.xCenter * 640 - (face.width * 640 / 2), 
                           face.yCenter * 480 - (face.height * 480 / 2), 
                           face.width * 640, face.height * 480);
 
-      // Bereken positie (0-100)
       let xPos = Math.round((1 - face.xCenter) * 100); 
       let yPos = Math.round(face.yCenter * 100);
       
@@ -96,9 +80,7 @@
     canvasCtx.restore();
   }
 
-  const faceDetection = new FaceDetection({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
-  });
+  const faceDetection = new FaceDetection({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}` });
   faceDetection.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
   faceDetection.onResults(onResults);
 
