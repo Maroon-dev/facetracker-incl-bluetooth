@@ -9,8 +9,14 @@
     .container { position: relative; width: 640px; height: 480px; margin-top: 20px; }
     canvas { border-radius: 10px; border: 2px solid #444; width: 100%; max-width: 640px; height: auto; }
     .controls { margin-top: 20px; padding: 15px; background: #333; border-radius: 8px; text-align: center; }
-    button { padding: 12px 24px; font-size: 16px; cursor: pointer; background: #00ff00; border: none; border-radius: 5px; font-weight: bold; color: black; }
+    button { padding: 12px 24px; font-size: 16px; cursor: pointer; background: #00ff00; border: none; border-radius: 5px; font-weight: bold; color: black; margin: 5px; }
+    button:active { background: #00cc00; }
     #status { margin-top: 10px; color: #00ff00; font-weight: bold; }
+    
+    /* Nieuwe styles voor de Tilt knoppen */
+    .tilt-controls { display: flex; flex-direction: column; align-items: center; margin-top: 20px; gap: 10px; background: #222; padding: 15px; border-radius: 10px; }
+    .tilt-btn { width: 70px; height: 70px; font-size: 24px; background: #ff9900; color: white; border-radius: 50%; }
+    .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #aaa; }
   </style>
 </head>
 <body>
@@ -25,10 +31,18 @@
   <canvas id="output_canvas" width="640px" height="480px"></canvas>
 </div>
 
+<div class="tilt-controls">
+  <div class="label">Tilt Offset</div>
+  <button id="upBtn" class="tilt-btn">▲</button>
+  <button id="downBtn" class="tilt-btn">▼</button>
+</div>
+
 <script type="module">
   let bluetoothCharacteristic = null;
   const connectBtn = document.getElementById('connectBtn');
   const statusDiv = document.getElementById('status');
+  const upBtn = document.getElementById('upBtn');
+  const downBtn = document.getElementById('downBtn');
 
   const serviceUUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
   const charUUID    = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
@@ -38,7 +52,7 @@
     try {
       statusDiv.innerText = "Status: Zoeken naar robot...";
       const device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [serviceUUID] }] // Zoekt op type, niet op naam
+        filters: [{ services: [serviceUUID] }]
       });
       
       const server = await device.gatt.connect();
@@ -55,17 +69,37 @@
 
   // --- Data Verzenden ---
   let lastSent = 0;
-  async function stuurData(x, y) {
+  async function stuurData(bericht) {
     const now = Date.now();
-    // 35ms is een veilige snelheid voor stabiele tracking op iPhone
-    if (now - lastSent > 35 && bluetoothCharacteristic) { 
+    if (bluetoothCharacteristic) { 
       const encoder = new TextEncoder();
-      const data = encoder.encode(`${x},${y}\n`);
-      // Zonder response is veel sneller
+      const data = encoder.encode(bericht);
       await bluetoothCharacteristic.writeValueWithoutResponse(data).catch(() => {});
       lastSent = now;
     }
   }
+
+  // --- Tilt Trim Logica ---
+  let tiltInterval;
+  function startTilting(cmd) {
+    stuurData(cmd);
+    tiltInterval = setInterval(() => stuurData(cmd), 100);
+  }
+  function stopTilting() {
+    clearInterval(tiltInterval);
+  }
+
+  // Event listeners voor muis en touch (omhoog)
+  upBtn.addEventListener('mousedown', () => startTilting('T_UP'));
+  upBtn.addEventListener('mouseup', stopTilting);
+  upBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startTilting('T_UP'); });
+  upBtn.addEventListener('touchend', stopTilting);
+
+  // Event listeners voor muis en touch (omlaag)
+  downBtn.addEventListener('mousedown', () => startTilting('T_DN'));
+  downBtn.addEventListener('mouseup', stopTilting);
+  downBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startTilting('T_DN'); });
+  downBtn.addEventListener('touchend', stopTilting);
 
   // --- Face Detection (MediaPipe) ---
   const videoElement = document.getElementById('input_video');
@@ -80,18 +114,19 @@
     if (results.detections.length > 0) {
       const face = results.detections[0].boundingBox;
       
-      // Teken groene box om gezicht
       canvasCtx.strokeStyle = "#00FF00";
       canvasCtx.lineWidth = 4;
       canvasCtx.strokeRect(face.xCenter * 640 - (face.width * 640 / 2), 
                           face.yCenter * 480 - (face.height * 480 / 2), 
                           face.width * 640, face.height * 480);
 
-      // Bereken positie (0-100)
       let xPos = Math.round((1 - face.xCenter) * 100); 
       let yPos = Math.round(face.yCenter * 100);
       
-      stuurData(xPos, yPos);
+      // Alleen stuurdata aanroepen voor tracking als we niet handmatig aan het trimmen zijn
+      if (!tiltInterval && Date.now() - lastSent > 35) {
+        stuurData(`${xPos},${yPos}`);
+      }
     }
     canvasCtx.restore();
   }
