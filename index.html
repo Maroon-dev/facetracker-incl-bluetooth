@@ -1,17 +1,20 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Gimbal Tracker - Face + Gyro</title>
+  <title>Gimbal Tracker - Multimodal</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <style>
     body { margin: 0; display: flex; flex-direction: column; align-items: center; background: #1a1a1a; color: white; font-family: sans-serif; }
     .container { position: relative; width: 640px; height: 480px; margin-top: 20px; }
     canvas { border-radius: 10px; border: 2px solid #444; width: 100%; max-width: 640px; height: auto; }
-    .controls { margin-top: 20px; padding: 15px; background: #333; border-radius: 8px; text-align: center; display: flex; gap: 10px; }
-    button { padding: 12px 24px; font-size: 16px; cursor: pointer; border: none; border-radius: 5px; font-weight: bold; color: black; }
+    .controls { margin-top: 20px; padding: 15px; background: #333; border-radius: 8px; text-align: center; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+    button { padding: 12px 24px; font-size: 14px; cursor: pointer; border: none; border-radius: 5px; font-weight: bold; color: black; transition: 0.3s; }
+    .active { border: 3px solid white; box-shadow: 0 0 10px rgba(255,255,255,0.5); }
     #connectBtn { background: #00ff00; }
-    #gyroBtn { background: #00d4ff; }
+    #btnBoth { background: #ff00ff; color: white; }
+    #btnFace { background: #ffcc00; }
+    #btnGyro { background: #00d4ff; }
     #status { margin-top: 10px; color: #00ff00; font-weight: bold; width: 100%; text-align: center; }
   </style>
 </head>
@@ -19,7 +22,9 @@
 
 <div class="controls">
   <button id="connectBtn">1. VERBIND ROBOT</button>
-  <button id="gyroBtn">2. ACTIVEER GYRO</button>
+  <button id="btnBoth" class="active">FACE + GYRO</button>
+  <button id="btnFace">ALLEEN FACE</button>
+  <button id="btnGyro">ALLEEN GYRO</button>
 </div>
 <div id="status">Status: Klaar voor start</div>
 
@@ -30,23 +35,39 @@
 
 <script type="module">
   let bluetoothCharacteristic = null;
-  let gyroActive = false;
+  let currentMode = 'BOTH'; // BOTH, FACE, GYRO
   let phoneAlpha = 0, phoneBeta = 0;
+  let rawAlpha = 0, rawBeta = 0;
   
   const connectBtn = document.getElementById('connectBtn');
-  const gyroBtn = document.getElementById('gyroBtn');
+  const btnBoth = document.getElementById('btnBoth');
+  const btnFace = document.getElementById('btnFace');
+  const btnGyro = document.getElementById('btnGyro');
   const statusDiv = document.getElementById('status');
 
+  // --- Modus Selectie ---
+  function setMode(mode) {
+    currentMode = mode;
+    [btnBoth, btnFace, btnGyro].forEach(b => b.classList.remove('active'));
+    if(mode === 'BOTH') btnBoth.classList.add('active');
+    if(mode === 'FACE') btnFace.classList.add('active');
+    if(mode === 'GYRO') btnGyro.classList.add('active');
+    
+    // Activeer Gyro sensoren als dat nog niet gebeurd is
+    if(mode !== 'FACE') activateGyro();
+  }
+
+  btnBoth.onclick = () => setMode('BOTH');
+  btnFace.onclick = () => setMode('FACE');
+  btnGyro.onclick = () => setMode('GYRO');
+
+  // --- Bluetooth ---
   const serviceUUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
   const charUUID    = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 
-  // --- Bluetooth Verbinding ---
   connectBtn.addEventListener('click', async () => {
     try {
-      statusDiv.innerText = "Status: Zoeken naar robot...";
-      const device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [serviceUUID] }]
-      });
+      const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [serviceUUID] }] });
       const server = await device.gatt.connect();
       const service = await server.getPrimaryService(serviceUUID);
       bluetoothCharacteristic = await service.getCharacteristic(charUUID);
@@ -54,26 +75,18 @@
     } catch (error) { statusDiv.innerText = "Fout: " + error.message; }
   });
 
-  // --- iPhone Gyro Toestemming ---
-  gyroBtn.addEventListener('click', async () => {
+  // --- Gyro Activatie ---
+  async function activateGyro() {
     if (typeof DeviceOrientationEvent.requestPermission === 'function') {
       const permission = await DeviceOrientationEvent.requestPermission();
-      if (permission === 'granted') {
-        startGyro();
-      }
-    } else {
-      startGyro(); // Voor Android/Desktop
-    }
-  });
+      if (permission === 'granted') { listenGyro(); }
+    } else { listenGyro(); }
+  }
 
-  function startGyro() {
-    gyroActive = true;
-    gyroBtn.innerText = "GYRO ACTIEF";
-    gyroBtn.style.background = "#555";
-    window.addEventListener('deviceorientation', (event) => {
-      // We ronden af om de data klein te houden
-      phoneAlpha = Math.round(event.alpha); // Pan
-      phoneBeta = Math.round(event.beta);   // Tilt
+  function listenGyro() {
+    window.addEventListener('deviceorientation', (e) => {
+      rawAlpha = Math.round(e.alpha);
+      rawBeta = Math.round(e.beta);
     });
   }
 
@@ -81,17 +94,21 @@
   let lastSent = 0;
   async function stuurData(faceX, faceY) {
     const now = Date.now();
-    if (now - lastSent > 40 && bluetoothCharacteristic) { 
+    if (now - lastSent > 40 && bluetoothCharacteristic) {
+      // Bepaal wat we sturen op basis van de modus
+      const x = (currentMode === 'BOTH' || currentMode === 'FACE') ? faceX : 50;
+      const y = (currentMode === 'BOTH' || currentMode === 'FACE') ? faceY : 50;
+      const a = (currentMode === 'BOTH' || currentMode === 'GYRO') ? rawAlpha : 0;
+      const b = (currentMode === 'BOTH' || currentMode === 'GYRO') ? rawBeta : 0;
+
+      const payload = `${x},${y},${a},${b}\n`;
       const encoder = new TextEncoder();
-      // We sturen nu 4 waarden: FaceX, FaceY, GyroAlpha, GyroBeta
-      const payload = `${faceX},${faceY},${phoneAlpha},${phoneBeta}\n`;
-      const data = encoder.encode(payload);
-      await bluetoothCharacteristic.writeValueWithoutResponse(data).catch(() => {});
+      await bluetoothCharacteristic.writeValueWithoutResponse(encoder.encode(payload)).catch(()=>{});
       lastSent = now;
     }
   }
 
-  // --- Face Detection (MediaPipe) ---
+  // --- MediaPipe Face Detection ---
   const videoElement = document.getElementById('input_video');
   const canvasElement = document.getElementById('output_canvas');
   const canvasCtx = canvasElement.getContext('2d');
@@ -103,30 +120,25 @@
 
     if (results.detections.length > 0) {
       const face = results.detections[0].boundingBox;
-      canvasCtx.strokeStyle = "#00FF00";
-      canvasCtx.lineWidth = 4;
-      canvasCtx.strokeRect(face.xCenter * 640 - (face.width * 640 / 2), 
-                          face.yCenter * 480 - (face.height * 480 / 2), 
-                          face.width * 640, face.height * 480);
-
-      let xPos = Math.round((1 - face.xCenter) * 100); 
-      let yPos = Math.round(face.yCenter * 100);
-      
-      stuurData(xPos, yPos);
+      if (currentMode !== 'GYRO') {
+        canvasCtx.strokeStyle = "#00FF00";
+        canvasCtx.lineWidth = 4;
+        canvasCtx.strokeRect(face.xCenter * 640 - (face.width * 640 / 2), 
+                            face.yCenter * 480 - (face.height * 480 / 2), 
+                            face.width * 640, face.height * 480);
+      }
+      stuurData(Math.round((1 - face.xCenter) * 100), Math.round(face.yCenter * 100));
+    } else {
+      stuurData(50, 50);
     }
     canvasCtx.restore();
   }
 
-  const faceDetection = new FaceDetection({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
-  });
+  const faceDetection = new FaceDetection({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}` });
   faceDetection.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
   faceDetection.onResults(onResults);
 
-  const camera = new Camera(videoElement, {
-    onFrame: async () => { await faceDetection.send({image: videoElement}); },
-    width: 640, height: 480
-  });
+  const camera = new Camera(videoElement, { onFrame: async () => { await faceDetection.send({image: videoElement}); }, width: 640, height: 480 });
   camera.start();
 </script>
 </body>
