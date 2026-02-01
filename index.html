@@ -1,32 +1,24 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Gimbal Tracker - Multimodal</title>
+  <title>Gimbal Tracker - Full Speed</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <style>
     body { margin: 0; display: flex; flex-direction: column; align-items: center; background: #1a1a1a; color: white; font-family: sans-serif; }
     .container { position: relative; width: 640px; height: 480px; margin-top: 20px; }
     canvas { border-radius: 10px; border: 2px solid #444; width: 100%; max-width: 640px; height: auto; }
-    .controls { margin-top: 20px; padding: 15px; background: #333; border-radius: 8px; text-align: center; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-    button { padding: 12px 24px; font-size: 14px; cursor: pointer; border: none; border-radius: 5px; font-weight: bold; color: black; transition: 0.3s; }
-    .active { border: 3px solid white; box-shadow: 0 0 10px rgba(255,255,255,0.5); }
-    #connectBtn { background: #00ff00; }
-    #btnBoth { background: #ff00ff; color: white; }
-    #btnFace { background: #ffcc00; }
-    #btnGyro { background: #00d4ff; }
-    #status { margin-top: 10px; color: #00ff00; font-weight: bold; width: 100%; text-align: center; }
+    .controls { margin-top: 20px; padding: 15px; background: #333; border-radius: 8px; text-align: center; }
+    button { padding: 12px 24px; font-size: 16px; cursor: pointer; background: #00ff00; border: none; border-radius: 5px; font-weight: bold; color: black; }
+    #status { margin-top: 10px; color: #00ff00; font-weight: bold; }
   </style>
 </head>
 <body>
 
 <div class="controls">
-  <button id="connectBtn">1. VERBIND ROBOT</button>
-  <button id="btnBoth" class="active">FACE + GYRO</button>
-  <button id="btnFace">ALLEEN FACE</button>
-  <button id="btnGyro">ALLEEN GYRO</button>
+  <button id="connectBtn">VERBIND ROBOT</button>
+  <div id="status">Status: Klaar voor start</div>
 </div>
-<div id="status">Status: Klaar voor start</div>
 
 <div class="container">
   <video id="input_video" style="display:none"></video>
@@ -35,80 +27,47 @@
 
 <script type="module">
   let bluetoothCharacteristic = null;
-  let currentMode = 'BOTH'; // BOTH, FACE, GYRO
-  let phoneAlpha = 0, phoneBeta = 0;
-  let rawAlpha = 0, rawBeta = 0;
-  
   const connectBtn = document.getElementById('connectBtn');
-  const btnBoth = document.getElementById('btnBoth');
-  const btnFace = document.getElementById('btnFace');
-  const btnGyro = document.getElementById('btnGyro');
   const statusDiv = document.getElementById('status');
 
-  // --- Modus Selectie ---
-  function setMode(mode) {
-    currentMode = mode;
-    [btnBoth, btnFace, btnGyro].forEach(b => b.classList.remove('active'));
-    if(mode === 'BOTH') btnBoth.classList.add('active');
-    if(mode === 'FACE') btnFace.classList.add('active');
-    if(mode === 'GYRO') btnGyro.classList.add('active');
-    
-    // Activeer Gyro sensoren als dat nog niet gebeurd is
-    if(mode !== 'FACE') activateGyro();
-  }
-
-  btnBoth.onclick = () => setMode('BOTH');
-  btnFace.onclick = () => setMode('FACE');
-  btnGyro.onclick = () => setMode('GYRO');
-
-  // --- Bluetooth ---
   const serviceUUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
   const charUUID    = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 
+  // --- Bluetooth Verbinding ---
   connectBtn.addEventListener('click', async () => {
     try {
-      const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [serviceUUID] }] });
+      statusDiv.innerText = "Status: Zoeken naar robot...";
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [serviceUUID] }] // Zoekt op type, niet op naam
+      });
+      
       const server = await device.gatt.connect();
       const service = await server.getPrimaryService(serviceUUID);
       bluetoothCharacteristic = await service.getCharacteristic(charUUID);
+      
       statusDiv.innerText = "Status: VERBONDEN! ✅";
-    } catch (error) { statusDiv.innerText = "Fout: " + error.message; }
+      connectBtn.disabled = true;
+      connectBtn.innerText = "ACTIEF";
+    } catch (error) { 
+      statusDiv.innerText = "Fout: " + error.message; 
+    }
   });
-
-  // --- Gyro Activatie ---
-  async function activateGyro() {
-    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-      const permission = await DeviceOrientationEvent.requestPermission();
-      if (permission === 'granted') { listenGyro(); }
-    } else { listenGyro(); }
-  }
-
-  function listenGyro() {
-    window.addEventListener('deviceorientation', (e) => {
-      rawAlpha = Math.round(e.alpha);
-      rawBeta = Math.round(e.beta);
-    });
-  }
 
   // --- Data Verzenden ---
   let lastSent = 0;
-  async function stuurData(faceX, faceY) {
+  async function stuurData(x, y) {
     const now = Date.now();
-    if (now - lastSent > 40 && bluetoothCharacteristic) {
-      // Bepaal wat we sturen op basis van de modus
-      const x = (currentMode === 'BOTH' || currentMode === 'FACE') ? faceX : 50;
-      const y = (currentMode === 'BOTH' || currentMode === 'FACE') ? faceY : 50;
-      const a = (currentMode === 'BOTH' || currentMode === 'GYRO') ? rawAlpha : 0;
-      const b = (currentMode === 'BOTH' || currentMode === 'GYRO') ? rawBeta : 0;
-
-      const payload = `${x},${y},${a},${b}\n`;
+    // 35ms is een veilige snelheid voor stabiele tracking op iPhone
+    if (now - lastSent > 35 && bluetoothCharacteristic) { 
       const encoder = new TextEncoder();
-      await bluetoothCharacteristic.writeValueWithoutResponse(encoder.encode(payload)).catch(()=>{});
+      const data = encoder.encode(`${x},${y}\n`);
+      // Zonder response is veel sneller
+      await bluetoothCharacteristic.writeValueWithoutResponse(data).catch(() => {});
       lastSent = now;
     }
   }
 
-  // --- MediaPipe Face Detection ---
+  // --- Face Detection (MediaPipe) ---
   const videoElement = document.getElementById('input_video');
   const canvasElement = document.getElementById('output_canvas');
   const canvasCtx = canvasElement.getContext('2d');
@@ -120,25 +79,33 @@
 
     if (results.detections.length > 0) {
       const face = results.detections[0].boundingBox;
-      if (currentMode !== 'GYRO') {
-        canvasCtx.strokeStyle = "#00FF00";
-        canvasCtx.lineWidth = 4;
-        canvasCtx.strokeRect(face.xCenter * 640 - (face.width * 640 / 2), 
-                            face.yCenter * 480 - (face.height * 480 / 2), 
-                            face.width * 640, face.height * 480);
-      }
-      stuurData(Math.round((1 - face.xCenter) * 100), Math.round(face.yCenter * 100));
-    } else {
-      stuurData(50, 50);
+      
+      // Teken groene box om gezicht
+      canvasCtx.strokeStyle = "#00FF00";
+      canvasCtx.lineWidth = 4;
+      canvasCtx.strokeRect(face.xCenter * 640 - (face.width * 640 / 2), 
+                          face.yCenter * 480 - (face.height * 480 / 2), 
+                          face.width * 640, face.height * 480);
+
+      // Bereken positie (0-100)
+      let xPos = Math.round((1 - face.xCenter) * 100); 
+      let yPos = Math.round(face.yCenter * 100);
+      
+      stuurData(xPos, yPos);
     }
     canvasCtx.restore();
   }
 
-  const faceDetection = new FaceDetection({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}` });
+  const faceDetection = new FaceDetection({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
+  });
   faceDetection.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
   faceDetection.onResults(onResults);
 
-  const camera = new Camera(videoElement, { onFrame: async () => { await faceDetection.send({image: videoElement}); }, width: 640, height: 480 });
+  const camera = new Camera(videoElement, {
+    onFrame: async () => { await faceDetection.send({image: videoElement}); },
+    width: 640, height: 480
+  });
   camera.start();
 </script>
 </body>
