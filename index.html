@@ -1,94 +1,142 @@
 <!DOCTYPE html>
-<html>
+<html lang="nl">
 <head>
-  <title>Gimbal Tracker - Pan & Tilt Face Tracking</title>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
-  <style>
-    body { margin: 0; display: flex; flex-direction: column; align-items: center; background: #1a1a1a; color: white; font-family: sans-serif; }
-    .container { position: relative; width: 640px; height: 480px; margin-top: 20px; }
-    canvas { border-radius: 10px; border: 2px solid #444; width: 100%; max-width: 640px; height: auto; }
-    .controls { margin-top: 20px; padding: 15px; background: #333; border-radius: 8px; text-align: center; }
-    button { padding: 12px 24px; font-size: 16px; cursor: pointer; background: #00ff00; border: none; border-radius: 5px; font-weight: bold; color: black; }
-    #status { margin-top: 10px; color: #00ff00; font-weight: bold; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>RawCam Web</title>
+    <style>
+        /* Reset & Basis */
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: -apple-system, sans-serif; }
+        
+        /* Video Container */
+        #camera-view {
+            width: 100%;
+            height: 100%;
+            object-fit: cover; /* Vult het hele scherm */
+            display: block;
+        }
+
+        /* Sluiterknop */
+        #shutter-btn {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 70px;
+            height: 70px;
+            background-color: rgba(255,255,255,0.8);
+            border: 4px solid #fff;
+            border-radius: 50%;
+            cursor: pointer;
+            z-index: 10;
+            transition: transform 0.1s;
+        }
+        #shutter-btn:active { transform: translateX(-50%) scale(0.95); background-color: #fff; }
+
+        /* Feedback Flash */
+        #flash {
+            position: absolute; top:0; left:0; width:100%; height:100%;
+            background: white; opacity: 0; pointer-events: none;
+            transition: opacity 0.2s; z-index: 20;
+        }
+
+        /* Info tekst */
+        #info {
+            position: absolute; top: 20px; left: 0; width: 100%;
+            text-align: center; color: rgba(255,255,255,0.5);
+            font-size: 12px; pointer-events: none; z-index: 5;
+        }
+    </style>
 </head>
 <body>
 
-<div class="controls">
-  <button id="connectBtn">VERBIND ROBOT</button>
-  <div id="status">Status: Klaar voor start</div>
-</div>
+    <video id="camera-view" autoplay playsinline muted></video>
+    
+    <canvas id="photo-canvas" style="display:none;"></canvas>
 
-<div class="container">
-  <video id="input_video" style="display:none"></video>
-  <canvas id="output_canvas" width="640px" height="480px"></canvas>
-</div>
+    <div id="info">Zoekst naar maximale resolutie...</div>
+    <div id="shutter-btn"></div>
+    <div id="flash"></div>
 
-<script type="module">
-  let bluetoothCharacteristic = null;
-  const connectBtn = document.getElementById('connectBtn');
-  const statusDiv = document.getElementById('status');
+    <script>
+        const video = document.getElementById('camera-view');
+        const canvas = document.getElementById('photo-canvas');
+        const shutterBtn = document.getElementById('shutter-btn');
+        const flash = document.getElementById('flash');
+        const info = document.getElementById('info');
 
-  const serviceUUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-  const charUUID    = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+        // Camera Instellingen
+        const constraints = {
+            audio: false,
+            video: {
+                facingMode: { exact: "environment" }, // Achtercamera
+                width: { ideal: 4096 }, // Probeer 4K te pakken
+                height: { ideal: 2160 }
+            }
+        };
 
-  connectBtn.addEventListener('click', async () => {
-    try {
-      const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [serviceUUID] }] });
-      const server = await device.gatt.connect();
-      const service = await server.getPrimaryService(serviceUUID);
-      bluetoothCharacteristic = await service.getCharacteristic(charUUID);
-      statusDiv.innerText = "Status: VERBONDEN! ✅";
-    } catch (error) { statusDiv.innerText = "Fout: " + error.message; }
-  });
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                
+                // Wacht tot de video metadata geladen is om de werkelijke resolutie te tonen
+                video.onloadedmetadata = () => {
+                    const track = stream.getVideoTracks()[0];
+                    const settings = track.getSettings();
+                    info.textContent = `Stream: ${settings.width}x${settings.height}px (Web "Raw")`;
+                };
+            } catch (err) {
+                // Fallback als 'environment' niet werkt (bijv. desktop)
+                try {
+                    const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    video.srcObject = fallbackStream;
+                    info.textContent = "Fallback camera modus";
+                } catch (e) {
+                    alert("Geen toegang tot camera. Controleer instellingen.");
+                }
+            }
+        }
 
-  let lastSent = 0;
-  async function stuurData(x, y) {
-    const now = Date.now();
-    if (now - lastSent > 35 && bluetoothCharacteristic) { 
-      const encoder = new TextEncoder();
-      const data = encoder.encode(`${x},${y}\n`);
-      await bluetoothCharacteristic.writeValueWithoutResponse(data).catch(() => {});
-      lastSent = now;
-    }
-  }
+        function takePhoto() {
+            // Flash effect
+            flash.style.opacity = 1;
+            setTimeout(() => flash.style.opacity = 0, 100);
 
-  const videoElement = document.getElementById('input_video');
-  const canvasElement = document.getElementById('output_canvas');
-  const canvasCtx = canvasElement.getContext('2d');
+            // Canvas instellen op exacte video grootte
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            const ctx = canvas.getContext('2d');
+            // Teken het huidige video frame op het canvas
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-  function onResults(results) {
-    canvasCtx.save();
-    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-    canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            // Exporteer als PNG (Lossless compressie, geen JPEG compressie)
+            canvas.toBlob((blob) => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                // Bestandsnaam met timestamp
+                const date = new Date();
+                a.download = `IMG_${date.getTime()}.png`;
+                document.body.appendChild(a);
+                a.click();
+                
+                // Opruimen
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                }, 100);
+            }, 'image/png');
+        }
 
-    if (results.detections.length > 0) {
-      const face = results.detections[0].boundingBox;
-      
-      canvasCtx.strokeStyle = "#00FF00";
-      canvasCtx.lineWidth = 4;
-      canvasCtx.strokeRect(face.xCenter * 640 - (face.width * 640 / 2), 
-                          face.yCenter * 480 - (face.height * 480 / 2), 
-                          face.width * 640, face.height * 480);
-
-      let xPos = Math.round((1 - face.xCenter) * 100); 
-      let yPos = Math.round(face.yCenter * 100);
-      
-      stuurData(xPos, yPos);
-    }
-    canvasCtx.restore();
-  }
-
-  const faceDetection = new FaceDetection({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}` });
-  faceDetection.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
-  faceDetection.onResults(onResults);
-
-  const camera = new Camera(videoElement, {
-    onFrame: async () => { await faceDetection.send({image: videoElement}); },
-    width: 640, height: 480
-  });
-  camera.start();
-</script>
+        shutterBtn.addEventListener('click', takePhoto);
+        
+        // Start de app
+        startCamera();
+    </script>
 </body>
 </html>
